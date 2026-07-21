@@ -565,6 +565,10 @@ body { margin: 0; overflow: hidden; background: #0a0a12; font-family: 'Noto Seri
         <button class="start-file-btn" id="inkLimitModeToggle" style="min-width:11em;">🛑 とまる</button>
       </div>
       <div class="ssl-row">
+        <span class="ssl-lbl">絵をうごかす・まわす</span>
+        <button class="start-file-btn" id="moveRotateToggle" style="min-width:11em;">✋ する</button>
+      </div>
+      <div class="ssl-row">
         <span class="ssl-lbl">おてほんの文字</span>
         <button class="start-file-btn" id="defaultTextToggle" style="min-width:8em;">✒️ ひょうじする</button>
       </div>
@@ -861,6 +865,7 @@ let histStart = 0;           // 論理先頭の物理オフセット
 const histScratchM = new THREE.Matrix4(); // 履歴読み出し用の使い回しバッファ
 const histScratchC = new THREE.Color();
 let strokeBeginTime = 0; // ストローク開始時刻（ms）。サイズ追従ブーストの時間窓に使用
+let moveRotateEnabled = true; // 絵の移動・回転（グリップ＋A/B）を許可するか。トグルで変更
 let bulkBoundaryPtr = 0;     // 一括読込・リプレイ用のストローク境界ポインタ
 let inkGeometry = null;      // 動的バッファ・全チャンク共有のジオメトリ
 let inkMaterial = null;      // 動的バッファ・全チャンク共有のマテリアル
@@ -2732,6 +2737,7 @@ let abGestureLatchA = false;
 let abGestureLatchB = false;
 
 function handleRotationAndPan(){
+    if(!moveRotateEnabled) return; // トグルで無効化されている
     if(!rightController) return;
     if(!gamepad) return;
 
@@ -3389,6 +3395,23 @@ document.getElementById("downloadJsonBtn").addEventListener("click", downloadCur
         strokeStartResponse = parseFloat(slider.value);
     });
     updateSliderBg(slider);
+})();
+
+// ===== 絵をうごかす・まわす トグル =====
+// グリップ＋A（移動）／グリップ＋B（回転）を有効/無効にする。
+// 「しない」にすると、書くことに集中でき、誤って絵を動かす事故も防げる。
+// グリップ＋スティックの太さ・はらい調整は影響を受けない。
+(function(){
+    const btn = document.getElementById("moveRotateToggle");
+
+    function refresh(){
+        btn.textContent = moveRotateEnabled ? "✋ する" : "🔒 しない";
+    }
+    btn.addEventListener("click", () => {
+        moveRotateEnabled = !moveRotateEnabled;
+        refresh();
+    });
+    refresh();
 })();
 
 // ===== おてほんの文字 表示/非表示トグル =====
