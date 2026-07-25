@@ -793,6 +793,14 @@ let leftGamepad = null;
 // ===== 筆先・描画管理 =====
 let tipMesh = null;
 let stickMesh = null;
+let brushGroup = null;      // 筆メッシュ全体のグループ（表示/非表示の切り替え用）
+let brushDisabled = false;  // グリップ＋A連打で筆を封じた状態（書けない）
+// 筆の封じ/解除ジェスチャ（グリップ＋A5連打）
+const BRUSH_TOGGLE_TAPS = 5;      // 必要な連打回数
+const BRUSH_TAP_TIMEOUT_MS = 700; // この間隔を超えたらカウントをリセット
+let brushTapCount = 0;
+let brushTapLastTime = 0;
+let prevAForTap = false;
 let drawing = false;
 let hasLast = false;
 let lastSize = 0.01;
@@ -1441,6 +1449,8 @@ function attachBrush(){
     brush.rotation.set(-Math.PI / 3, 0, Math.PI / 2);
 
     rightController.add(brush);
+    brushGroup = brush;
+    brush.visible = !brushDisabled; // 封じ状態を引き継ぐ
 
     // 念のため、leftController側に過去の筆が残っていれば除去
     if(leftController && leftController !== rightController){
@@ -2597,6 +2607,41 @@ function draw(){
     hasLast = true;
 }
 
+// ===== 筆の封じ/解除（グリップ＋Aボタン5連打） =====
+// 右手グリップを握りながらAボタンを続けて5回押すと、筆が消えて書けなくなる。
+// もう一度同じ操作で筆が戻る。連打はAの押下エッジで数え、移動ジェスチャ
+// （グリップ＋Aの押しっぱなし）とは区別される。押下間隔が空くとカウントは
+// リセットされるため、移動操作の最中に誤発動しない。
+// ※ 定数・状態の宣言はファイル冒頭にある（ここでのlet宣言はTDZエラー）
+
+function checkBrushToggleGesture(){
+    if(!gamepad || !rightController) return;
+    const gripHeld = getTriggerValue(1) >= GRIP_PAN_THRESHOLD;
+    const aHeld = !!gamepad.buttons[BTN_A]?.pressed;
+    const aEdge = aHeld && !prevAForTap; // 押した瞬間だけ
+    prevAForTap = aHeld;
+
+    if(!gripHeld){ brushTapCount = 0; return; } // グリップを離したらリセット
+
+    if(aEdge){
+        const now = performance.now();
+        if(now - brushTapLastTime > BRUSH_TAP_TIMEOUT_MS) brushTapCount = 0;
+        brushTapLastTime = now;
+        brushTapCount++;
+        if(brushTapCount >= BRUSH_TOGGLE_TAPS){
+            brushTapCount = 0;
+            brushDisabled = !brushDisabled;
+            if(brushGroup) brushGroup.visible = !brushDisabled;
+            if(brushDisabled){
+                drawing = false;
+                hasLast = false;
+                releaseActive = false;
+            }
+            vibrate("right", 120, 0.9); // 切り替え完了の手応え
+        }
+    }
+}
+
 // ===== スタンプ =====
 function stamp(position, size, angleY = 0, angleX = 0){
     dummy.position.copy(position);
@@ -3030,8 +3075,17 @@ function updateColor(){
     const pressed = gamepad.buttons[BTN_A]?.pressed;
     const now = performance.now();
 
+    // グリップを握りながらのAは筆の封じ/解除ジェスチャ用なので、
+    // Aの通常機能（墨色トグル／リプレイ）は発火させない。
+    const gripHeldForBrushToggle = getTriggerValue(1) >= GRIP_PAN_THRESHOLD;
+
     // ラッチ中（移動ジェスチャに使われたA）は、完全に離すまで通常機能をロック。
-    if(abGestureLatchA){
+    if(gripHeldForBrushToggle){
+        aBtnHoldStart = 0;
+        aBtnLongFired = false;
+        aBtnWarnFired = false;
+        prevAPressed = pressed;
+    } else if(abGestureLatchA){
         if(!pressed) abGestureLatchA = false; // 離したらロック解除
         aBtnHoldStart = 0;
         aBtnLongFired = false;
@@ -3140,7 +3194,9 @@ function render(){
     suppressAButton = false;
     suppressBButton = false;
 
-    if(trigger > 0.05 && !replayActive){
+    checkBrushToggleGesture();
+
+    if(trigger > 0.05 && !replayActive && !brushDisabled){
         releaseActive = false;
         draw();
     } else {
