@@ -575,14 +575,14 @@ body { margin: 0; overflow: hidden; background: #0a0a12; font-family: 'Noto Seri
         <span class="ssl-lbl">ふでの太さ</span>
         <span class="ssl-val" id="brushSizeVal">26</span>
         <input type="range" id="brushSizeSlider" min="0.008" max="0.08" step="0.002" value="0.026">
-        <button class="ssl-toggle" id="brushSizeToggle">ちょうせい</button>
+        <button class="ssl-toggle off" id="brushSizeToggle">こてい</button>
         <div class="ssl-warn" id="brushSizeWarning"></div>
       </div>
       <div class="ssl-row has-toggle" id="releaseTauRow">
         <span class="ssl-lbl">はらいの長さ</span>
         <span class="ssl-val" id="releaseTauVal">0.07</span>
         <input type="range" id="releaseTauSlider" min="0.03" max="0.25" step="0.01" value="0.07">
-        <button class="ssl-toggle" id="releaseTauToggle">ちょうせい</button>
+        <button class="ssl-toggle off" id="releaseTauToggle">こてい</button>
         <div class="ssl-warn" id="releaseTauWarning"></div>
       </div>
       <div class="ssl-row">
@@ -597,11 +597,15 @@ body { margin: 0; overflow: hidden; background: #0a0a12; font-family: 'Noto Seri
       </div>
       <div class="ssl-row">
         <span class="ssl-lbl">絵をうごかす・まわす</span>
-        <button class="start-file-btn" id="moveRotateToggle" style="min-width:11em;">✋ する</button>
+        <button class="start-file-btn" id="moveRotateToggle" style="min-width:11em;">🔒 しない</button>
       </div>
       <div class="ssl-row">
         <span class="ssl-lbl">おてほんの文字</span>
-        <button class="start-file-btn" id="defaultTextToggle" style="min-width:8em;">✒️ ひょうじする</button>
+        <button class="start-file-btn" id="defaultTextToggle" style="min-width:8em;">⬜ ひょうじしない</button>
+      </div>
+      <div class="ssl-row">
+        <span class="ssl-lbl">リピート（Aながおし）</span>
+        <button class="start-file-btn" id="repeatToggle" style="min-width:8em;">🚫 しない</button>
       </div>
     </div>
 
@@ -763,10 +767,11 @@ body { margin: 0; overflow: hidden; background: #0a0a12; font-family: 'Noto Seri
             <div class="ctrl-title">みぎて（ふで）</div>
             <div class="ctrl-label-row"><span class="btn-badge red">① トリガー</span><span class="desc">おしながらうごかすと 絵がかける！つよくおすと 線がふとくなる。はやくふりぬくと「はらい」がでる</span></div>
             <div class="ctrl-label-row"><span class="btn-badge purple">② スティック</span><span class="desc">たおした方向で いろをえらべる（カラーモード）</span></div>
-            <div class="ctrl-label-row"><span class="btn-badge green">③ A ボタン</span><span class="desc">くろ↔しろ（ながくおすと もういちど見る）</span></div>
+            <div class="ctrl-label-row"><span class="btn-badge green">③ A ボタン</span><span class="desc">くろ↔しろ に きりかえる（メニューで「リピート」を する にすると、ながおしで さいしょから もういちど見る）</span></div>
             <div class="ctrl-label-row"><span class="btn-badge orange">④ B ボタン</span><span class="desc">1つもどる（かわいた墨は もどせない）。ながくおすと ぜんぶけす</span></div>
-            <div class="ctrl-label-row"><span class="btn-badge gray">⑤ メニューボタン</span><span class="desc">メニューに もどる</span></div>
-            <div class="ctrl-label-row"><span class="btn-badge gray">⑥ グリップ</span><span class="desc">にぎりながら… A＝絵をうごかす／B＝絵をまわす／スティック上下＝ふでのふとさ／左右＝はらいのながさ／おしこみ＝ふとさとはらいを もとにもどす</span></div>
+            <div class="ctrl-label-row"><span class="btn-badge gray">⑤ メニューボタン</span><span class="desc">メニューに もどる（もどって入りなおすと「こてい」も かいじょされる）</span></div>
+            <div class="ctrl-label-row"><span class="btn-badge gray">⑥ グリップ</span><span class="desc">にぎりながら… A＝絵をうごかす／B＝絵をまわす（メニューで「絵をうごかす・まわす」を する のとき）／スティック上下＝ふとさ・左右＝はらいのながさ（メニューで「ちょうせい」のとき）／おしこみ＝もとにもどす</span></div>
+            <div class="ctrl-label-row"><span class="btn-badge gray">🔒 こてい</span><span class="desc">みぎのグリップ＋トリガーを いっしょに引いたまま A を10回つづけておすと、かけない・けせない「こてい」になる。おなじそうさで かいじょ。こてい中に そうさしようとすると ブルッと ふるえる。メニューにもどって 入りなおしても かいじょ</span></div>
           </div>
         </div>
 
@@ -789,18 +794,33 @@ let rightController = null;
 let gamepad = null;
 let leftController = null;
 let leftGamepad = null;
+// inputSource → three.js コントローラーオブジェクトの対応表。
+// connected/disconnected で維持し、毎フレームの再バインド（reconcileInputSources）で
+// 正しいオブジェクトを引くために使う。取りこぼしても index フォールバックで自己修復する。
+const srcCtrlMap = new Map();
 
 // ===== 筆先・描画管理 =====
 let tipMesh = null;
 let stickMesh = null;
 let brushGroup = null;      // 筆メッシュ全体のグループ（表示/非表示の切り替え用）
-let brushDisabled = false;  // グリップ＋A連打で筆を封じた状態（書けない）
-// 筆の封じ/解除ジェスチャ（グリップ＋A5連打）
-const BRUSH_TOGGLE_TAPS = 5;      // 必要な連打回数
-const BRUSH_TAP_TIMEOUT_MS = 700; // この間隔を超えたらカウントをリセット
-let brushTapCount = 0;
-let brushTapLastTime = 0;
-let prevAForTap = false;
+
+// ===== 固定化（ロック）状態 =====
+// 「新しく書いたり消したりできなくなる」完全固定モード。
+// 発動/解除ジェスチャ：右手グリップ＋右手トリガー＋Aボタンを10回連続押し。
+// 固定化中はコントローラーのあらゆる操作をブロックし、操作しようとした瞬間だけ
+// バイブで知らせる。メニュー再入室（sessionstart）でも解除される。
+let operationLocked = false;          // 固定化中フラグ（書けない／消せない／動かせない）
+const LOCK_TOGGLE_TAPS = 10;          // 必要な連打回数
+const LOCK_TAP_TIMEOUT_MS = 700;      // この間隔を超えたらカウントをリセット
+const LOCK_TRIGGER_THRESHOLD = 0.5;   // 「トリガーを引いている」とみなすしきい値
+let lockTapCount = 0;
+let lockTapLastTime = 0;
+let prevAForLock = false;
+// 固定化中の「操作しようとした瞬間」バイブ用：直前フレームの入力状態
+let lockFbPrev = {
+    rTrig:false, rGrip:false, rA:false, rB:false, rStickBtn:false, rStickAx:false,
+    lTrig:false, lGrip:false, lX:false, lY:false, lStickBtn:false, lStickAx:false
+};
 let drawing = false;
 let hasLast = false;
 let lastSize = 0.01;
@@ -904,9 +924,10 @@ let histStart = 0;           // 論理先頭の物理オフセット
 const histScratchM = new THREE.Matrix4(); // 履歴読み出し用の使い回しバッファ
 const histScratchC = new THREE.Color();
 let strokeBeginTime = 0; // ストローク開始時刻（ms）。サイズ追従ブーストの時間窓に使用
-let moveRotateEnabled = true; // 絵の移動・回転（グリップ＋A/B）を許可するか。トグルで変更
-let brushSizeAdjustEnabled = true;  // グリップ＋スティック上下での太さ調整を許可するか
-let releaseTauAdjustEnabled = true; // グリップ＋スティック左右でのはらい調整を許可するか
+let moveRotateEnabled = false; // 絵の移動・回転（グリップ＋A/B）を許可するか。トグルで変更
+let brushSizeAdjustEnabled = false;  // グリップ＋スティック上下での太さ調整を許可するか
+let releaseTauAdjustEnabled = false; // グリップ＋スティック左右でのはらい調整を許可するか
+let repeatEnabled = false;     // Aボタン長押しでの「もういちど見る」（リピート）を許可するか
 let bulkBoundaryPtr = 0;     // 一括読込・リプレイ用のストローク境界ポインタ
 let inkGeometry = null;      // 動的バッファ・全チャンク共有のジオメトリ
 let inkMaterial = null;      // 動的バッファ・全チャンク共有のマテリアル
@@ -1032,7 +1053,7 @@ let blinkVisible = true;
 // ===== default.json 固定スロット管理 =====
 let defaultGalleryData = null;
 const DEFAULT_SLOT = 0;
-let showDefaultText = true; // セッション開始時にお手本の文字を表示するか（トグルボタンで変更）
+let showDefaultText = false; // セッション開始時にお手本の文字を表示するか（トグルボタンで変更）
 const MAX_USER_GALLERY = 4;
 
 // ===== 描画グループ =====
@@ -1092,45 +1113,7 @@ function init(){
 
     loadDefaultFiles().then(() => {
         renderer.xr.addEventListener("sessionstart", onARSessionStart);
-        renderer.xr.addEventListener("sessionstart", () => {
-            const session = renderer.xr.getSession();
-            if(session){
-                session.addEventListener("inputsourceschange", onInputSourcesChange);
-            }
-        });
     });
-}
-
-// ===== inputSources変化時の左右再評価 =====
-// handednessが入れ替わった場合や、connectedイベントを取りこぼした場合の救済
-function onInputSourcesChange(event){
-    const session = renderer.xr.getSession();
-    if(!session) return;
-
-    // 現存のinputSourcesからhandedness別に拾い直す
-    let rightSource = null;
-    let leftSource = null;
-    for(const source of session.inputSources){
-        if(source.handedness === "right") rightSource = source;
-        if(source.handedness === "left") leftSource = source;
-    }
-
-    // controller0/1 のどちらが現在の右手かをtargetRaySpace経由で判定するのは難しいので
-    // とりあえずgamepad参照を更新。筆の付け替えはonConnectedで実施される。
-    if(rightSource){
-        gamepad = rightSource.gamepad;
-        // rightControllerに筆が付いていなければ付け直す
-        if(rightController && !tipMesh){
-            attachBrush();
-        }
-    } else {
-        gamepad = null;
-    }
-    if(leftSource){
-        leftGamepad = leftSource.gamepad;
-    } else {
-        leftGamepad = null;
-    }
 }
 
 // ===== default.json / default.png の事前読み込み =====
@@ -1207,6 +1190,11 @@ function createDefaultThumbnailDataURL(){
 
 // ===== AR セッション開始時の処理 =====
 function onARSessionStart(){
+    // メニューに戻って再入室したら固定化を必ず解除する
+    operationLocked = false;
+    lockTapCount = 0;
+    if(brushGroup) brushGroup.visible = true;
+
     if(!defaultGalleryData) return;
 
     if(gallery.length === 0 || gallery[0] !== defaultGalleryData){
@@ -1324,54 +1312,80 @@ function detachBrushFrom(ctrl){
     }
 }
 
+// connected/disconnected では inputSource→オブジェクトの対応表を更新するだけ。
+// 実際の左右バインド・筆/ギャラリーの付け替えは毎フレームの reconcileInputSources() が担う。
+// これにより、切替時にイベントを取りこぼしても次フレームで確実に復帰する。
 function onConnected(event){
-    const hand = event.data.handedness;
-    const target = event.target;
-
-    if(hand === "right"){
-        // すでに別コントローラに右手筆が付いていたら掃除
-        if(rightController && rightController !== target){
-            detachBrushFrom(rightController);
-        }
-        rightController = target;
-        // 念のため自分側も一度クリアしてから付け直す
-        detachBrushFrom(rightController);
-        tipMesh = null;
-        stickMesh = null;
-        stickUsedMesh = null;
-        attachBrush();
-    } else if(hand === "left"){
-        // 以前のleftControllerからgalleryGroupを外す
-        if(leftController && leftController !== target){
-            if(galleryGroup.parent === leftController){
-                leftController.remove(galleryGroup);
-            }
-        }
-        leftController = target;
-        // 万一こちらに筆が付いていたら除去
-        if(rightController !== leftController){
-            detachBrushFrom(leftController);
-        }
-        leftController.add(galleryGroup);
-    }
+    if(event.data) srcCtrlMap.set(event.data, event.target);
 }
 
 function onDisconnected(event){
-    const target = event.target;
-    if(target === rightController){
-        detachBrushFrom(rightController);
-        rightController = null;
-        tipMesh = null;
-        stickMesh = null;
-        stickUsedMesh = null;
+    if(event.data) srcCtrlMap.delete(event.data);
+}
+
+// ===== 毎フレームの左右再バインド（コントローラー⇔ハンド切替の要） =====
+// session.inputSources を唯一の権威として handedness から右手/左手を確定し、
+// three.js のコントローラーオブジェクトへ筆・ギャラリーを結びつけ直す。
+// コントローラーを持てば必ずコントローラー操作、手に持ち替えれば必ずその手、へ
+// 追従する。srcCtrlMap を優先し、取りこぼし時は inputSources 順の index で補う。
+function reconcileInputSources(){
+    const session = renderer.xr.getSession();
+    if(!session){
+        rightController = null; leftController = null;
+        gamepad = null; leftGamepad = null;
+        return;
+    }
+
+    const srcs = session.inputSources;
+    let rightSrc = null, leftSrc = null, rightIdx = -1, leftIdx = -1;
+    for(let i = 0; i < srcs.length; i++){
+        if(srcs[i].handedness === "right"){ rightSrc = srcs[i]; rightIdx = i; }
+        else if(srcs[i].handedness === "left"){ leftSrc = srcs[i]; leftIdx = i; }
+    }
+
+    // ---- 右手（ふで）----
+    if(rightSrc){
+        let ctrl = srcCtrlMap.get(rightSrc);
+        if(!ctrl && rightIdx >= 0) ctrl = renderer.xr.getController(rightIdx);
+        if(ctrl){
+            if(!ctrl.parent) scene.add(ctrl);
+            if(ctrl !== rightController){
+                if(rightController) detachBrushFrom(rightController);
+                rightController = ctrl;
+                tipMesh = null; stickMesh = null; stickUsedMesh = null;
+                attachBrush();
+            } else if(!tipMesh){
+                attachBrush();
+            }
+        }
+        gamepad = rightSrc.gamepad || null;
+    } else {
+        if(rightController) detachBrushFrom(rightController);
+        rightController = null; tipMesh = null; stickMesh = null; stickUsedMesh = null;
         gamepad = null;
     }
-    if(target === leftController){
-        if(galleryGroup.parent === leftController){
+
+    // ---- 左手（ギャラリー）----
+    if(leftSrc){
+        let ctrl = srcCtrlMap.get(leftSrc);
+        if(!ctrl && leftIdx >= 0) ctrl = renderer.xr.getController(leftIdx);
+        if(ctrl){
+            if(!ctrl.parent) scene.add(ctrl);
+            if(ctrl !== leftController){
+                if(leftController && galleryGroup.parent === leftController){
+                    leftController.remove(galleryGroup);
+                }
+                leftController = ctrl;
+                if(rightController !== leftController) detachBrushFrom(leftController);
+                leftController.add(galleryGroup);
+            }
+        }
+        leftGamepad = leftSrc.gamepad || null;
+    } else {
+        if(leftController && galleryGroup.parent === leftController){
             leftController.remove(galleryGroup);
         }
-        leftController = null;
-        leftGamepad = null;
+        leftController = null; leftGamepad = null;
     }
 }
 
@@ -1450,7 +1464,7 @@ function attachBrush(){
 
     rightController.add(brush);
     brushGroup = brush;
-    brush.visible = !brushDisabled; // 封じ状態を引き継ぐ
+    brush.visible = !operationLocked; // 固定化中は筆を非表示のまま引き継ぐ
 
     // 念のため、leftController側に過去の筆が残っていれば除去
     if(leftController && leftController !== rightController){
@@ -1837,44 +1851,6 @@ function createInkSystem(){
 
 // ===== インクシステム再初期化 =====
 // ===== Gamepad =====
-function updateGamepad(){
-    const session = renderer.xr.getSession();
-    if(!session){
-        gamepad = null;
-        leftGamepad = null;
-        return;
-    }
-
-    let foundRightGamepad = false;
-    let foundLeftGamepad = false;
-
-    for(const source of session.inputSources){
-        if(!source.gamepad) continue;
-
-        if(source.handedness === "right"){
-            gamepad = source.gamepad;
-            foundRightGamepad = true;
-
-            // controller0/1 のうち、このinputSourceに対応する側が
-            // rightControllerと違っていたら付け替える（handedness入れ替わり救済）
-            const xrCtrl0 = renderer.xr.getController(0);
-            const xrCtrl1 = renderer.xr.getController(1);
-            // inputSourceとcontrollerの対応はインデックス順なので
-            // ここでは「rightControllerに筆が付いているか」だけを健全性チェック
-            if(rightController && !tipMesh){
-                attachBrush();
-            }
-        }
-        if(source.handedness === "left"){
-            leftGamepad = source.gamepad;
-            foundLeftGamepad = true;
-        }
-    }
-
-    if(!foundRightGamepad) gamepad = null;
-    if(!foundLeftGamepad) leftGamepad = null;
-}
-
 // ===== トリガー値の取得 =====
 function getTriggerValue(index){
     return gamepad ? gamepad.buttons[index]?.value || 0 : 0;
@@ -2607,38 +2583,110 @@ function draw(){
     hasLast = true;
 }
 
-// ===== 筆の封じ/解除（グリップ＋Aボタン5連打） =====
-// 右手グリップを握りながらAボタンを続けて5回押すと、筆が消えて書けなくなる。
-// もう一度同じ操作で筆が戻る。連打はAの押下エッジで数え、移動ジェスチャ
-// （グリップ＋Aの押しっぱなし）とは区別される。押下間隔が空くとカウントは
-// リセットされるため、移動操作の最中に誤発動しない。
-// ※ 定数・状態の宣言はファイル冒頭にある（ここでのlet宣言はTDZエラー）
+// ===== 固定化 発動/解除（右グリップ＋右トリガー＋Aボタン10連打） =====
+// 右手グリップと右手トリガーを一緒に引いたまま、Aボタンを続けて10回押すと
+// 「固定化」（新しく書いたり消したりできない状態）になる。もう一度同じ操作で解除。
+// 連打はAの押下エッジで数え、押下間隔（LOCK_TAP_TIMEOUT_MS）が空くとリセットされる。
+// この関数は固定化中も毎フレーム走るので、固定化中でも解除ジェスチャは受け付けられる。
+// ※ 定数・状態の宣言はファイル冒頭にある
 
-function checkBrushToggleGesture(){
+function checkLockGesture(){
     if(!gamepad || !rightController) return;
     const gripHeld = getTriggerValue(1) >= GRIP_PAN_THRESHOLD;
+    const trigHeld = getTriggerValue(BTN_TRIGGER) >= LOCK_TRIGGER_THRESHOLD;
     const aHeld = !!gamepad.buttons[BTN_A]?.pressed;
-    const aEdge = aHeld && !prevAForTap; // 押した瞬間だけ
-    prevAForTap = aHeld;
+    const aEdge = aHeld && !prevAForLock; // 押した瞬間だけ
+    prevAForLock = aHeld;
 
-    if(!gripHeld){ brushTapCount = 0; return; } // グリップを離したらリセット
+    // グリップとトリガーの両方を引いている姿勢のときだけカウントする
+    if(!(gripHeld && trigHeld)){ lockTapCount = 0; return; }
 
     if(aEdge){
         const now = performance.now();
-        if(now - brushTapLastTime > BRUSH_TAP_TIMEOUT_MS) brushTapCount = 0;
-        brushTapLastTime = now;
-        brushTapCount++;
-        if(brushTapCount >= BRUSH_TOGGLE_TAPS){
-            brushTapCount = 0;
-            brushDisabled = !brushDisabled;
-            if(brushGroup) brushGroup.visible = !brushDisabled;
-            if(brushDisabled){
+        if(now - lockTapLastTime > LOCK_TAP_TIMEOUT_MS) lockTapCount = 0;
+        lockTapLastTime = now;
+        lockTapCount++;
+        if(lockTapCount >= LOCK_TOGGLE_TAPS){
+            lockTapCount = 0;
+            operationLocked = !operationLocked;
+            if(brushGroup) brushGroup.visible = !operationLocked;
+            if(operationLocked){
                 drawing = false;
                 hasLast = false;
                 releaseActive = false;
+                // 発動直後の誤バイブ防止：今の入力状態を「押されている」扱いで記録
+                syncLockFeedbackPrev(true);
             }
-            vibrate("right", 120, 0.9); // 切り替え完了の手応え
+            vibrate("right", 200, 1.0); // 発動/解除の手応え（通常より長め）
         }
+    }
+}
+
+// 固定化中に「操作しようとした瞬間」だけバイブで知らせる。
+// 押しっぱなしでは鳴らさず（立ち上がりエッジのみ）、操作した側の手を鳴らす。
+// 解除ジェスチャ姿勢（右グリップ＋右トリガー）の間は、解除操作の一部なので鳴らさない。
+function syncLockFeedbackPrev(setPressed){
+    // setPressed=true のとき、現在の入力を「押下中」として記録し直す（発動直後の誤発火防止）
+    const rGrip = getTriggerValue(1) >= GRIP_PAN_THRESHOLD;
+    const rTrigV = getTriggerValue(BTN_TRIGGER);
+    if(gamepad){
+        lockFbPrev.rTrig = setPressed ? true : (rTrigV >= 0.4);
+        lockFbPrev.rGrip = setPressed ? true : rGrip;
+        lockFbPrev.rA = setPressed ? true : !!gamepad.buttons[BTN_A]?.pressed;
+        lockFbPrev.rB = setPressed ? true : !!gamepad.buttons[BTN_B]?.pressed;
+        lockFbPrev.rStickBtn = setPressed ? true : !!gamepad.buttons[BTN_STICK]?.pressed;
+        lockFbPrev.rStickAx = setPressed ? true : (Math.hypot(gamepad.axes[AXIS_X]||0, gamepad.axes[AXIS_Y]||0) > 0.5);
+    }
+    if(leftGamepad){
+        lockFbPrev.lTrig = setPressed ? true : !!leftGamepad.buttons[0]?.pressed;
+        lockFbPrev.lGrip = setPressed ? true : !!leftGamepad.buttons[1]?.pressed;
+        lockFbPrev.lX = setPressed ? true : !!leftGamepad.buttons[4]?.pressed;
+        lockFbPrev.lY = setPressed ? true : !!leftGamepad.buttons[5]?.pressed;
+        lockFbPrev.lStickBtn = setPressed ? true : !!leftGamepad.buttons[BTN_STICK]?.pressed;
+        lockFbPrev.lStickAx = setPressed ? true : (Math.hypot(leftGamepad.axes[2]||0, leftGamepad.axes[3]||0) > 0.5);
+    }
+}
+
+function handleLockedFeedback(){
+    // 解除ジェスチャ姿勢（右グリップ＋右トリガー）中は checkLockGesture が担当するので鳴らさない
+    const rGrip = getTriggerValue(1) >= GRIP_PAN_THRESHOLD;
+    const rTrigV = getTriggerValue(BTN_TRIGGER);
+    const unlockPosture = rGrip && (rTrigV >= LOCK_TRIGGER_THRESHOLD);
+
+    // ---- 右手 ----
+    if(gamepad){
+        const rTrig = rTrigV >= 0.4;
+        const rA = !!gamepad.buttons[BTN_A]?.pressed;
+        const rB = !!gamepad.buttons[BTN_B]?.pressed;
+        const rStickBtn = !!gamepad.buttons[BTN_STICK]?.pressed;
+        const rStickAx = Math.hypot(gamepad.axes[AXIS_X]||0, gamepad.axes[AXIS_Y]||0) > 0.5;
+
+        if(!unlockPosture){
+            const edge = (rTrig && !lockFbPrev.rTrig) || (rGrip && !lockFbPrev.rGrip)
+                      || (rA && !lockFbPrev.rA) || (rB && !lockFbPrev.rB)
+                      || (rStickBtn && !lockFbPrev.rStickBtn) || (rStickAx && !lockFbPrev.rStickAx);
+            if(edge) vibrate("right", 60, 0.7);
+        }
+        lockFbPrev.rTrig = rTrig; lockFbPrev.rGrip = rGrip; lockFbPrev.rA = rA;
+        lockFbPrev.rB = rB; lockFbPrev.rStickBtn = rStickBtn; lockFbPrev.rStickAx = rStickAx;
+    }
+
+    // ---- 左手 ----
+    if(leftGamepad){
+        const lTrig = !!leftGamepad.buttons[0]?.pressed;
+        const lGrip = !!leftGamepad.buttons[1]?.pressed;
+        const lX = !!leftGamepad.buttons[4]?.pressed;
+        const lY = !!leftGamepad.buttons[5]?.pressed;
+        const lStickBtn = !!leftGamepad.buttons[BTN_STICK]?.pressed;
+        const lStickAx = Math.hypot(leftGamepad.axes[2]||0, leftGamepad.axes[3]||0) > 0.5;
+
+        const edge = (lTrig && !lockFbPrev.lTrig) || (lGrip && !lockFbPrev.lGrip)
+                  || (lX && !lockFbPrev.lX) || (lY && !lockFbPrev.lY)
+                  || (lStickBtn && !lockFbPrev.lStickBtn) || (lStickAx && !lockFbPrev.lStickAx);
+        if(edge) vibrate("left", 60, 0.7);
+
+        lockFbPrev.lTrig = lTrig; lockFbPrev.lGrip = lGrip; lockFbPrev.lX = lX;
+        lockFbPrev.lY = lY; lockFbPrev.lStickBtn = lStickBtn; lockFbPrev.lStickAx = lStickAx;
     }
 }
 
@@ -3075,12 +3123,13 @@ function updateColor(){
     const pressed = gamepad.buttons[BTN_A]?.pressed;
     const now = performance.now();
 
-    // グリップを握りながらのAは筆の封じ/解除ジェスチャ用なので、
-    // Aの通常機能（墨色トグル／リプレイ）は発火させない。
-    const gripHeldForBrushToggle = getTriggerValue(1) >= GRIP_PAN_THRESHOLD;
+    // 右グリップ＋右トリガーを一緒に引いている間は「固定化」ジェスチャの姿勢なので、
+    // Aの通常機能（墨色トグル／リピート）は発火させない（Aは連打カウント専用）。
+    const lockGesturePosture = (getTriggerValue(1) >= GRIP_PAN_THRESHOLD)
+                            && (getTriggerValue(BTN_TRIGGER) >= LOCK_TRIGGER_THRESHOLD);
 
     // ラッチ中（移動ジェスチャに使われたA）は、完全に離すまで通常機能をロック。
-    if(gripHeldForBrushToggle){
+    if(lockGesturePosture){
         aBtnHoldStart = 0;
         aBtnLongFired = false;
         aBtnWarnFired = false;
@@ -3103,7 +3152,8 @@ function updateColor(){
             aBtnHoldStart = now;
             aBtnLongFired = false;
             aBtnWarnFired = false;
-        } else {
+        } else if(repeatEnabled){
+            // リピート「する」のときだけ長押しで「もういちど見る」（リプレイ）
             const held = now - aBtnHoldStart;
             if(!aBtnWarnFired && held >= LONG_PRESS_WARNING_MS){
                 aBtnWarnFired = true;
@@ -3166,7 +3216,7 @@ function updateColor(){
 }
 
 function render(){
-    updateGamepad();
+    reconcileInputSources();
 
     // textGroupの行列がNaN/Infinityに汚染されていたら原点にリセットして自己修復する。
     // （万一の行列破損で「描いても見えない／リプレイも見えない」状態が永続するのを防ぐ）
@@ -3194,35 +3244,50 @@ function render(){
     suppressAButton = false;
     suppressBButton = false;
 
-    checkBrushToggleGesture();
+    // 固定化の発動/解除ジェスチャ判定は固定化中も毎フレーム走らせる（解除を受け付けるため）
+    checkLockGesture();
 
-    if(trigger > 0.05 && !replayActive && !brushDisabled){
-        releaseActive = false;
-        draw();
-    } else {
-        if(drawing){
-            // 払いフェーズ開始：離した瞬間の太さと時刻を記録
-            releaseActive = true;
-            releaseFade = 1.0;
-            releaseStartSize = lastSize;
-            releaseStartTime = performance.now();
-            releasePrevTime  = releaseStartTime;
-            releaseDist = 0;
-        }
+    if(operationLocked){
+        // 固定化中：新しく書く・消す・動かす等すべての操作をブロックし、
+        // 操作しようとした瞬間だけバイブで知らせる（何もしなければ鳴らない）。
         drawing = false;
         hasLast = false;
-        if(releaseActive) releaseStroke();
-        // 払い中（最大0.35秒）はパン/回転ジェスチャと干渉しないよう抑制する
-        if(!replayActive && !releaseActive) handleRotationAndPan();
-        // 描いていない間に次のチャンクを先回りで確保（書き出しのカクつき防止）
-        if(!releaseActive) preallocateChunkIfNeeded();
+        releaseActive = false;
+        handleLockedFeedback();
+    } else {
+        // 右グリップ＋右トリガーの姿勢は固定化ジェスチャ中なので描画させない
+        const lockGesturePosture = (getTriggerValue(1) >= GRIP_PAN_THRESHOLD)
+                                && (trigger >= LOCK_TRIGGER_THRESHOLD);
+
+        if(trigger > 0.05 && !replayActive && !lockGesturePosture){
+            releaseActive = false;
+            draw();
+        } else {
+            if(drawing){
+                // 払いフェーズ開始：離した瞬間の太さと時刻を記録
+                releaseActive = true;
+                releaseFade = 1.0;
+                releaseStartSize = lastSize;
+                releaseStartTime = performance.now();
+                releasePrevTime  = releaseStartTime;
+                releaseDist = 0;
+            }
+            drawing = false;
+            hasLast = false;
+            if(releaseActive) releaseStroke();
+            // 払い中（最大0.35秒）はパン/回転ジェスチャと干渉しないよう抑制する。
+            // 固定化ジェスチャ姿勢（グリップ＋トリガー）中も、Aが移動ジェスチャと重なるため抑制。
+            if(!replayActive && !releaseActive && !lockGesturePosture) handleRotationAndPan();
+            // 描いていない間に次のチャンクを先回りで確保（書き出しのカクつき防止）
+            if(!releaseActive) preallocateChunkIfNeeded();
+        }
+        updateBrushSizeAdjust();
+        updateColor();
+        checkClear();
+        checkUndo();
+        handleLeftController();
+        tickReplay();
     }
-    updateBrushSizeAdjust();
-    updateColor();
-    checkClear();
-    checkUndo();
-    handleLeftController();
-    tickReplay();
     tickBlink();
     updateStickGauge();
 
@@ -3536,6 +3601,23 @@ setupInlineToggle("releaseTauToggle", "releaseTauRow",
     }
     btn.addEventListener("click", () => {
         showDefaultText = !showDefaultText;
+        refresh();
+    });
+    refresh();
+})();
+
+// ===== リピート（Aながおし）する/しない トグル =====
+// 「する」のとき、右手Aボタンを長押しすると描いた絵を最初から再生（もういちど見る）。
+// 「しない」のとき、Aは墨色の切り替え（くろ↔しろ）だけになり、長押ししても再生しない。
+(function(){
+    const btn = document.getElementById("repeatToggle");
+
+    function refresh(){
+        btn.textContent = repeatEnabled ? "🔁 する" : "🚫 しない";
+        btn.style.opacity = repeatEnabled ? "1.0" : "0.55";
+    }
+    btn.addEventListener("click", () => {
+        repeatEnabled = !repeatEnabled;
         refresh();
     });
     refresh();
