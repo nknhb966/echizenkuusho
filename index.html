@@ -658,7 +658,7 @@ body { margin: 0; overflow: hidden; background: #0a0a12; font-family: 'Noto Seri
       </div>
       <div class="ssl-row">
         <span class="ssl-lbl">おてほんの文字</span>
-        <button class="start-file-btn" id="defaultTextToggle" style="min-width:8em;">⬜ ひょうじしない</button>
+        <button class="start-file-btn" id="defaultTextToggle" style="min-width:8em;">✒️ ひょうじする</button>
       </div>
       <div class="ssl-row">
         <span class="ssl-lbl">リピート（Aながおし）</span>
@@ -1110,7 +1110,7 @@ let blinkVisible = true;
 // ===== default.json 固定スロット管理 =====
 let defaultGalleryData = null;
 const DEFAULT_SLOT = 0;
-let showDefaultText = false; // セッション開始時にお手本の文字を表示するか（トグルボタンで変更）
+let showDefaultText = true; // セッション開始時にお手本の文字を表示するか（トグルボタンで変更）。ロード時のデフォルトは表示する
 // お手本（ガイド）の不透明度（0=透明〜1=不透明）。半透明の見本として表示する。
 const DEFAULT_TEXT_OPACITY = 0.3;
 const MAX_USER_GALLERY = 4;
@@ -3831,10 +3831,6 @@ setupInlineToggle("releaseTauToggle", "releaseTauRow",
     document.querySelectorAll(".ssl-preset-btn").forEach(btn => {
         btn.addEventListener("click", () => applyPreset(btn.dataset.preset));
     });
-
-    // ロード／リロード時は必ず「ビギナー」を初期状態にする。
-    // （各トグル・スライダーの初期化が済んだこの時点で一度適用する）
-    applyPreset("beginner");
 })();
 
 // ===== Loadボタンにイベント登録 =====
