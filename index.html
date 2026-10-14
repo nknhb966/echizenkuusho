@@ -823,7 +823,7 @@ body { margin: 0; overflow: hidden; background: #0a0a12; font-family: 'Noto Seri
           <div class="ctrl-labels">
             <div class="ctrl-title">みぎて（ふで）</div>
             <div class="ctrl-label-row"><span class="btn-badge red">① トリガー</span><span class="desc">おしながらうごかすと 絵がかける！つよくおすと 線がふとくなる。はやくふりぬくと「はらい」がでる</span></div>
-            <div class="ctrl-label-row"><span class="btn-badge purple">② スティック</span><span class="desc">たおした方向で いろをえらべる（カラーモード）</span></div>
+            <div class="ctrl-label-row"><span class="btn-badge purple">② スティック</span><span class="desc">たおした方向で いろをえらべる（カラーモード）。カチッと おしこむと、おてほんを もういちど さいしょから 見られる</span></div>
             <div class="ctrl-label-row"><span class="btn-badge green">③ A ボタン</span><span class="desc">くろ↔しろ に きりかえる（メニューで「リピート」を する にすると、ながおしで さいしょから もういちど見る）</span></div>
             <div class="ctrl-label-row"><span class="btn-badge orange">④ B ボタン</span><span class="desc">1つもどる（かわいた墨は もどせない）。ながくおすと ぜんぶけす</span></div>
             <div class="ctrl-label-row"><span class="btn-badge gray">⑤ メニューボタン</span><span class="desc">メニューに もどる（もどって入りなおすと「こてい」も かいじょされる）</span></div>
@@ -1111,6 +1111,8 @@ let blinkVisible = true;
 let defaultGalleryData = null;
 const DEFAULT_SLOT = 0;
 let showDefaultText = false; // セッション開始時にお手本の文字を表示するか（トグルボタンで変更）
+// お手本（ガイド）の不透明度（0=透明〜1=不透明）。半透明の見本として表示する。
+const DEFAULT_TEXT_OPACITY = 0.3;
 const MAX_USER_GALLERY = 4;
 
 // ===== 描画グループ =====
@@ -1265,43 +1267,135 @@ function onARSessionStart(){
         if(pendingSlotIndex >= 0) pendingSlotIndex++;
     }
 
-    if(replayActive || replayData){
-        updateGalleryHighlight();
-        return;
+    // お手本（ガイド）は編集対象外の独立レイヤー。表示ONなら毎回アニメ再生し、
+    // OFFなら消す。独立レイヤーなので、再入室時に残っている自分の線は消えない。
+    // （白紙で始めたいときはトグルOFF。お手本はスティック押し込みでいつでも呼べる）
+    if(showDefaultText){
+        startGuideReplay();
+        currentGalleryIndex = DEFAULT_SLOT;
+    } else {
+        clearGuide();
     }
-
-    // 既に描かれた作品があるときは消さない（セッション再入場時の保護）
-    if(stampIndex > 0){
-        updateGalleryHighlight();
-        return;
-    }
-
-    // トグルが「非表示」ならお手本の自動リプレイをスキップ（白紙で開始）。
-    // ギャラリーのサムネイルからはいつでも呼び出せる。
-    if(!showDefaultText){
-        updateGalleryHighlight();
-        return;
-    }
-
-    startReplayFromData(defaultGalleryData);
-    currentGalleryIndex = DEFAULT_SLOT;
     updateGalleryHighlight();
 }
 
-// ===== 指定データからリプレイ開始 =====
-function startReplayFromData(data){
-    clearAll();
-    replayData = {
-        count: data.count,
-        matrices: data.matrices,
-        colors: data.colors,
-        strokeBoundaries: data.strokeBoundaries || []
-    };
-    placeReplayInFrontOfViewer(); // ★読み込んだ絵を視点正面へ再配置
-    replayIndex = 0;
-    replayFrameCount = 0;
-    replayActive = true;
-    replayWaitFrames = REPLAY_START_DELAY_FRAMES;
+// ===== お手本（ガイド）レイヤー =====
+// お手本は「編集・取り消し・クリア・保存・上限カウントの対象外」の独立レイヤー。
+// アニメ再生だけを行い、半透明の見本として表示する。
+// guideMesh は scene 直下（無変換）に置き、startGuideReplay 時点の textGroup 変換を
+// 各行列へ焼き込む＝「自分の線」と必ず同じ位置に揃い、以後 textGroup を戻したり
+// 自分の線を再生したりしても動かない（clearAll などの影響を受けない）。
+let guideMesh = null;          // お手本専用の InstancedMesh（半透明）
+let guideMaterial = null;
+let guideCapacity = 0;
+let guideWorldMatrices = [];   // 配置済みワールド行列（Matrix4）
+let guideColors = [];          // 各スタンプの色（Color）
+let guideBoundaries = [];      // ストローク境界（アニメの“間”用）
+let guideTotal = 0;
+let guideReplayActive = false;
+let guideRevealIndex = 0;
+let guideReplayFrame = 0;
+let guideWaitFrames = 0;
+
+function ensureGuideMesh(capacity){
+    if(!guideMaterial){
+        // 半透明の見本マテリアル。色はインスタンスごと（instanceColor）。
+        guideMaterial = new THREE.MeshLambertMaterial({
+            color: 0xffffff, transparent: true, opacity: DEFAULT_TEXT_OPACITY
+        });
+    }
+    if(guideMesh && guideCapacity >= capacity) return;
+    if(guideMesh){ scene.remove(guideMesh); guideMesh.dispose(); }
+    guideCapacity = Math.max(capacity, 256);
+    guideMesh = new THREE.InstancedMesh(inkGeometry, guideMaterial, guideCapacity);
+    guideMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(guideCapacity * 3), 3);
+    guideMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    guideMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    guideMesh.frustumCulled = false;
+    guideMesh.count = 0;
+    guideMesh.renderOrder = -1; // 不透明の自分のインクより先に描く
+    scene.add(guideMesh);
+}
+
+// お手本を消す（非表示）。自分の線（通常バッファ）には一切触れない。
+function clearGuide(){
+    guideReplayActive = false;
+    guideRevealIndex = 0;
+    guideTotal = 0;
+    if(guideMesh) guideMesh.count = 0;
+}
+
+// お手本を最初からアニメ再生する。自分の線がまだ無いとき（stampIndex===0）だけ、
+// お手本（と textGroup）を視点正面へ配置する。既に自分の線があるときは今の配置の
+// まま重ねるので位置がズレない。
+function startGuideReplay(){
+    if(!defaultGalleryData){ clearGuide(); return; }
+    const raw = defaultGalleryData.matrices;   // strokeOrder 適用済み
+    const n   = defaultGalleryData.count;
+
+    if(stampIndex === 0){
+        // 自分の線が無いので、お手本の中心が正面に来るよう textGroup を配置
+        placeGroupInFrontOfViewer(computeMatricesCenter(raw));
+    }
+    // 現在の textGroup 変換でお手本をワールド座標へ焼き込む（guideMesh は無変換）
+    textGroup.updateMatrixWorld(true);
+    const T = textGroup.matrix;
+    guideWorldMatrices = new Array(n);
+    for(let i = 0; i < n; i++){
+        guideWorldMatrices[i] = new THREE.Matrix4().multiplyMatrices(T, raw[i]);
+    }
+    guideColors     = defaultGalleryData.colors;
+    guideBoundaries = defaultGalleryData.strokeBoundaries || [];
+    guideTotal      = n;
+
+    ensureGuideMesh(n);
+    guideMesh.count  = 0;
+    guideRevealIndex = 0;
+    guideReplayFrame = 0;
+    guideWaitFrames  = REPLAY_START_DELAY_FRAMES;
+    guideReplayActive = true;
+}
+
+// 毎フレーム、お手本を少しずつ描き進める（本番の再生と同じ呼吸・間）。
+function tickGuideReplay(){
+    if(!guideReplayActive || !guideMesh) return;
+    if(guideWaitFrames > 0){ guideWaitFrames--; return; }
+    guideReplayFrame++;
+    if(guideReplayFrame < REPLAY_FRAME_PER_STAMP) return;
+    guideReplayFrame = 0;
+
+    const prev = guideRevealIndex;
+    const end  = Math.min(guideRevealIndex + replaySpeed, guideTotal);
+    for(let i = prev; i < end; i++){
+        guideMesh.setMatrixAt(i, guideWorldMatrices[i]);
+        guideMesh.setColorAt(i, guideColors[i]);
+    }
+    guideMesh.count = end;
+    guideMesh.instanceMatrix.needsUpdate = true;
+    if(guideMesh.instanceColor) guideMesh.instanceColor.needsUpdate = true;
+    guideRevealIndex = end;
+
+    // ストローク境界で少し“間”を置く
+    for(let bi = 1; bi < guideBoundaries.length; bi++){
+        const b = guideBoundaries[bi];
+        if(guideRevealIndex >= b && prev < b){
+            const before = b - 1, after = b;
+            if(before >= 0 && after < guideTotal){
+                const mB = guideWorldMatrices[before], mA = guideWorldMatrices[after];
+                const dx = mB.elements[12]-mA.elements[12];
+                const dy = mB.elements[13]-mA.elements[13];
+                const dz = mB.elements[14]-mA.elements[14];
+                guideWaitFrames = Math.round(Math.sqrt(dx*dx+dy*dy+dz*dz) * REPLAY_STROKE_PAUSE_FACTOR);
+            }
+            break;
+        }
+    }
+
+    if(guideRevealIndex >= guideTotal){
+        guideReplayActive = false;
+        guideWaitFrames = 0;
+        guideReplayFrame = 0;
+    }
 }
 
 // ===== 視点（ヘッドセット／カメラ）の位置と水平向きを取得 =====
@@ -1791,7 +1885,7 @@ function dropOldestStroke(){
     while(bakedChunks.length && bakedChunks[0].freed >= CHUNK_CAPACITY){
         const c = bakedChunks.shift();
         textGroup.remove(c.mesh);
-        c.mesh.dispose();
+        c.mesh.dispose(); // インスタンス属性のみ破棄（geo/matは共有なので触らない）
     }
 
     // 履歴・カウンタ・ストローク境界をn個ぶん前へ詰める
@@ -2010,7 +2104,14 @@ function clearAll(){
 
 function checkClear(){
     if(!gamepad) return;
-    const pressed = gamepad.buttons[BTN_STICK]?.pressed;
+    const pressed = !!gamepad.buttons[BTN_STICK]?.pressed;
+    const gripHeld = getTriggerValue(1) >= GRIP_PAN_THRESHOLD;
+    // スティック押し込み（グリップなし）を1回押すと、お手本をもう一度アニメ再生。
+    // グリップ＋押し込みは「太さ・はらいリセット」なので、グリップ中は反応させない。
+    // （この関数は固定化中は呼ばれないため、固定化中は自動的に無効になる）
+    if(pressed && !prevStickPressed && !gripHeld){
+        startGuideReplay();
+    }
     prevStickPressed = pressed;
 }
 
@@ -2321,12 +2422,15 @@ function loadDrawing(index){
     const data = gallery[index];
 
     if(defaultGalleryData && index === DEFAULT_SLOT){
-        startReplayFromData(data);
+        // お手本スロットは編集不可のガイド。自分の線はそのまま、お手本だけ再アニメ。
+        startGuideReplay();
         currentGalleryIndex = index;
         updateGalleryHighlight();
         return;
     }
 
+    // お手本以外（自分の作品）を読み込むときは、お手本ガイドは隠す
+    clearGuide();
     clearAll();
 
     // 履歴＋焼き込み経由で全量を復元（上限キャップなし）
@@ -3345,6 +3449,7 @@ function render(){
         handleLeftController();
         tickReplay();
     }
+    tickGuideReplay(); // お手本アニメは独立レイヤー。固定化中でも進行させる（操作ではない）
     tickBlink();
     updateStickGauge();
 
@@ -3688,14 +3793,14 @@ setupInlineToggle("releaseTauToggle", "releaseTauRow",
 // プリセットでは変更せず、利用者の個別設定を残す。押した後の個別変更も自由。
 (function(){
     const PRESETS = {
-        // ビギナー＝現状の初期値
-        beginner: { limit: 12000, keep: 10, brushSizeAdjust: false, releaseTauAdjust: false, moveRotate: false, repeat: false },
-        // スタンダード＝ビギナー＋（すみ18000／リピートする）
-        standard: { limit: 18000, keep: 10, brushSizeAdjust: false, releaseTauAdjust: false, moveRotate: false, repeat: true  },
-        // クリエイター＝スタンダード＋（すみ25000／筆数15／太さちょうせい／はらいちょうせい）
-        creator:  { limit: 25000, keep: 15, brushSizeAdjust: true,  releaseTauAdjust: true,  moveRotate: false, repeat: true  },
-        // スーパークリエイター＝クリエイター＋（すみ35000／筆数20／うごかす・まわすする）
-        super:    { limit: 35000, keep: 20, brushSizeAdjust: true,  releaseTauAdjust: true,  moveRotate: true,  repeat: true  }
+        // ビギナー＝初期値ベース＋おてほんの文字ひょうじする
+        beginner: { limit: 12000, keep: 10, brushSizeAdjust: false, releaseTauAdjust: false, moveRotate: false, repeat: false, defaultText: true  },
+        // スタンダード＝ビギナー＋（すみ18000／リピートする）。おてほんの文字ひょうじする
+        standard: { limit: 18000, keep: 10, brushSizeAdjust: false, releaseTauAdjust: false, moveRotate: false, repeat: true,  defaultText: true  },
+        // クリエイター＝スタンダード＋（すみ25000／筆数15／太さちょうせい／はらいちょうせい）。おてほんの文字ひょうじしない
+        creator:  { limit: 25000, keep: 15, brushSizeAdjust: true,  releaseTauAdjust: true,  moveRotate: false, repeat: true,  defaultText: false },
+        // スーパークリエイター＝クリエイター＋（すみ35000／筆数20／うごかす・まわすする）。おてほんの文字ひょうじしない
+        super:    { limit: 35000, keep: 20, brushSizeAdjust: true,  releaseTauAdjust: true,  moveRotate: true,  repeat: true,  defaultText: false }
     };
 
     // スライダーは値を入れて input/change を発火し、既存の表示更新・状態反映をそのまま使う
@@ -3720,6 +3825,7 @@ setupInlineToggle("releaseTauToggle", "releaseTauRow",
         setToggle("releaseTauToggle", releaseTauAdjustEnabled, p.releaseTauAdjust);
         setToggle("moveRotateToggle", moveRotateEnabled,       p.moveRotate);
         setToggle("repeatToggle",     repeatEnabled,           p.repeat);
+        setToggle("defaultTextToggle", showDefaultText,        p.defaultText);
     }
 
     document.querySelectorAll(".ssl-preset-btn").forEach(btn => {
@@ -3776,6 +3882,7 @@ function loadDrawingFromJSON(file) {
                 pendingSlotIndex = -1;
             }
 
+            clearGuide(); // ファイルを読み込むときはお手本ガイドを隠す
             clearAll();
 
             if(typeof json.replaySpeed === "number"){
