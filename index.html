@@ -3831,6 +3831,10 @@ setupInlineToggle("releaseTauToggle", "releaseTauRow",
     document.querySelectorAll(".ssl-preset-btn").forEach(btn => {
         btn.addEventListener("click", () => applyPreset(btn.dataset.preset));
     });
+
+    // ロード／リロード時は必ず「ビギナー」を初期状態にする。
+    // （各トグル・スライダーの初期化が済んだこの時点で一度適用する）
+    applyPreset("beginner");
 })();
 
 // ===== Loadボタンにイベント登録 =====
