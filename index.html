@@ -1325,24 +1325,43 @@ function clearGuide(){
     if(guideMesh) guideMesh.count = 0;
 }
 
-// お手本を最初からアニメ再生する。自分の線がまだ無いとき（stampIndex===0）だけ、
-// お手本（と textGroup）を視点正面へ配置する。既に自分の線があるときは今の配置の
-// まま重ねるので位置がズレない。
+// ===== お手本の配置行列を計算（その時点のプレイヤーの位置・向き基準） =====
+// お手本の正面法線は保存座標系で +Z（＝ワールド −Z から見て正しく読める）。
+// プレイヤーの水平視線 forward=(fx,0,fz) に対し、お手本の +Z がプレイヤー側（-forward）を
+// 向くよう Y軸回転 θ=atan2(-fx,-fz) をかける（プレイヤーが −Z を向く既定時は θ=0）。
+// 配置行列 G = T(target) · Ry(θ) · T(-center)。
+//   ・center を 1 回だけ原点へ寄せ、Y回転し、目の前 GUIDE_PLACE_DISTANCE の target へ移す。
+//   ・center を軸に回すので描画形状は不変、上下・鏡像も変化しない。
+//   ・毎回 raw（＝保存データ）から計算するため、再プレイで回転・位置が累積しない。
+//   ・保存時のプレイヤーの立ち位置・向きには依存しない（現在の視点だけで決まる）。
+// ※ textGroup（自分の線）には一切触れないので、自分の描画は動かない。
+const GUIDE_PLACE_DISTANCE = 0.7; // 目の位置からお手本の中心までの距離（m）
+function computeGuidePlacementMatrix(matrices){
+    const center = computeMatricesCenter(matrices);
+    if(!center) return new THREE.Matrix4(); // 空データは単位行列（無変換）
+    const { pos, forward } = getViewerPose(); // forward は水平・正規化済み
+    const target = pos.clone().add(forward.clone().multiplyScalar(GUIDE_PLACE_DISTANCE));
+    target.y = pos.y; // 目線の高さ
+    const theta = Math.atan2(-forward.x, -forward.z);
+    const Ry       = new THREE.Matrix4().makeRotationY(theta);
+    const toOrigin = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
+    const toTarget = new THREE.Matrix4().makeTranslation(target.x, target.y, target.z);
+    // G = toTarget * Ry * toOrigin
+    return new THREE.Matrix4().multiplyMatrices(Ry, toOrigin).premultiply(toTarget);
+}
+
+// お手本を最初からアニメ再生する。呼ばれた時点のプレイヤーの位置・向きを基準に、
+// お手本の中心を目線の高さ・正面 0.7m へ配置し、正面を向ける（textGroup は不変）。
 function startGuideReplay(){
     if(!defaultGalleryData){ clearGuide(); return; }
     const raw = defaultGalleryData.matrices;   // strokeOrder 適用済み
     const n   = defaultGalleryData.count;
 
-    if(stampIndex === 0){
-        // 自分の線が無いので、お手本の中心が正面に来るよう textGroup を配置
-        placeGroupInFrontOfViewer(computeMatricesCenter(raw));
-    }
-    // 現在の textGroup 変換でお手本をワールド座標へ焼き込む（guideMesh は無変換）
-    textGroup.updateMatrixWorld(true);
-    const T = textGroup.matrix;
+    // お手本専用の配置行列でワールド座標へ焼き込む（guideMesh は scene 直下＝無変換）
+    const G = computeGuidePlacementMatrix(raw);
     guideWorldMatrices = new Array(n);
     for(let i = 0; i < n; i++){
-        guideWorldMatrices[i] = new THREE.Matrix4().multiplyMatrices(T, raw[i]);
+        guideWorldMatrices[i] = new THREE.Matrix4().multiplyMatrices(G, raw[i]);
     }
     guideColors     = defaultGalleryData.colors;
     guideBoundaries = defaultGalleryData.strokeBoundaries || [];
