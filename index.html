@@ -1335,23 +1335,54 @@ function clearGuide(){
 //   ・毎回 raw（＝保存データ）から計算するため、再プレイで回転・位置が累積しない。
 //   ・保存時のプレイヤーの立ち位置・向きには依存しない（現在の視点だけで決まる）。
 // ※ textGroup（自分の線）には一切触れないので、自分の描画は動かない。
-const GUIDE_PLACE_DISTANCE = 0.7; // 目の位置からお手本の中心までの距離（m）
+const GUIDE_PLACE_DISTANCE = 0.7; // 目の位置からお手本のアンカーまでの距離（m）
+const GUIDE_TOP_FRACTION = 1 / 5;  // 正面に合わせる基準点：お手本の上から 1/5 の高さ
+
+// お手本のアンカー点（保存座標系）を求める。
+// 水平（X・Z）は描画範囲の中心、縦（Y）は「上から 1/5」の高さ。
+function computeGuideAnchor(matrices){
+    let minX=Infinity, minY=Infinity, minZ=Infinity;
+    let maxX=-Infinity, maxY=-Infinity, maxZ=-Infinity;
+    for(const m of matrices){
+        const x = m.elements[12], y = m.elements[13], z = m.elements[14];
+        if(!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
+        if(x<minX) minX=x; if(y<minY) minY=y; if(z<minZ) minZ=z;
+        if(x>maxX) maxX=x; if(y>maxY) maxY=y; if(z>maxZ) maxZ=z;
+    }
+    if(!isFinite(minX) || !isFinite(maxX)) return null;
+    return new THREE.Vector3(
+        (minX+maxX)/2,
+        maxY - (maxY-minY) * GUIDE_TOP_FRACTION, // 上端から全高の1/5だけ下
+        (minZ+maxZ)/2
+    );
+}
+
+// お手本の配置行列を計算する。
+//   ・基準点（上から1/5）を、目の位置からフル視線方向へ 0.7m の target に合わせる。
+//   ・お手本の正面法線 +Z が、プレイヤーのフル視線（上下の向き＝X軸回り回転を含む）の
+//     真正面を向くよう、Y軸回転 θ と X軸回転 φ を合成（R = Ry(θ)·Rx(φ)）。
+//       θ = atan2(-fx,-fz)（左右の向き）, φ = asin(fy)（上下の向き）
+//     → R·(+Z) = -forward（お手本の表がプレイヤーを向く）。ロール（Z軸回り）は入れない。
+//   ・G = T(target)·R·T(-anchor)。基準点を軸に回すので形状・上下・鏡像は不変。
+//   ・毎回 raw から計算するため再プレイで累積しない。保存時の立ち位置・向きに依存しない。
 function computeGuidePlacementMatrix(matrices){
-    const center = computeMatricesCenter(matrices);
-    if(!center) return new THREE.Matrix4(); // 空データは単位行列（無変換）
-    const { pos, forward } = getViewerPose(); // forward は水平・正規化済み
+    const anchor = computeGuideAnchor(matrices);
+    if(!anchor) return new THREE.Matrix4(); // 空データは単位行列（無変換）
+    const { pos, forward } = getViewerPoseFull(); // フル3D視線（上下を含む・正規化済み）
     const target = pos.clone().add(forward.clone().multiplyScalar(GUIDE_PLACE_DISTANCE));
-    target.y = pos.y; // 目線の高さ
     const theta = Math.atan2(-forward.x, -forward.z);
-    const Ry       = new THREE.Matrix4().makeRotationY(theta);
-    const toOrigin = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
+    const phi   = Math.asin(Math.max(-1, Math.min(1, forward.y)));
+    const Ry = new THREE.Matrix4().makeRotationY(theta);
+    const Rx = new THREE.Matrix4().makeRotationX(phi);
+    const R  = new THREE.Matrix4().multiplyMatrices(Ry, Rx); // R = Ry·Rx
+    const toOrigin = new THREE.Matrix4().makeTranslation(-anchor.x, -anchor.y, -anchor.z);
     const toTarget = new THREE.Matrix4().makeTranslation(target.x, target.y, target.z);
-    // G = toTarget * Ry * toOrigin
-    return new THREE.Matrix4().multiplyMatrices(Ry, toOrigin).premultiply(toTarget);
+    // G = toTarget · R · toOrigin
+    return new THREE.Matrix4().multiplyMatrices(R, toOrigin).premultiply(toTarget);
 }
 
 // お手本を最初からアニメ再生する。呼ばれた時点のプレイヤーの位置・向きを基準に、
-// お手本の中心を目線の高さ・正面 0.7m へ配置し、正面を向ける（textGroup は不変）。
+// お手本の基準点（上から1/5）をフル視線方向 0.7m へ配置し、正面を向ける（textGroup は不変）。
 function startGuideReplay(){
     if(!defaultGalleryData){ clearGuide(); return; }
     const raw = defaultGalleryData.matrices;   // strokeOrder 適用済み
@@ -1429,6 +1460,24 @@ function getViewerPose(){
     const quat = new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld);
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
     forward.y = 0; // 水平方向のみ（絵を傾けず正面に出す）
+    if(forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+    forward.normalize();
+    return { pos, forward };
+}
+
+// ===== 視点の位置とフル3D視線方向（上下の向き＝X軸回りの回転を含む）=====
+// getViewerPose は水平のみ（絵を傾けない用）だが、お手本はプレイヤーの上下の向きにも
+// 追従させたいので、こちらは forward.y を残した正規化済みベクトルを返す。
+function getViewerPoseFull(){
+    let cam = camera;
+    if(renderer.xr && renderer.xr.isPresenting){
+        const xrCam = renderer.xr.getCamera();
+        if(xrCam) cam = xrCam;
+    }
+    cam.updateMatrixWorld(true);
+    const pos = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+    const quat = new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
     if(forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
     forward.normalize();
     return { pos, forward };
